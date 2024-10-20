@@ -1,0 +1,166 @@
+use std::lib::PredicateAddress;
+use std::lib::@delta;
+use std::lib::@safe_increment;
+use std::lib::@init_once;
+use std::lib::@init_delta;
+use std::lib::@mut_keys;
+use std::auth::@verify_key;
+use std::lib::Secp256k1Signature;
+use std::auth::@check_if_predicate_owns;
+
+storage {
+
+    balances: (b256 => int),
+
+    cost: ( int => int),
+
+    item_owner: ( int => b256),
+
+
+    auction_ended: (int => bool),
+
+    // nonce: (b256 => int),
+}
+
+
+predicate PlaceBid {
+
+    pub var item_id: int;
+    
+    pub var bidder: b256;
+    
+    pub var amount: int;
+
+    
+    state current_owner = mut storage::item_owner[item_id];
+    
+    state current_cost = mut storage::cost[item_id];
+    // state nonce = mut storage::nonce[bidder];
+    state auction_ended = mut storage::auction_ended[item_id];
+
+    state owner_balance = mut storage::balances[current_owner];
+    state bidder_balance = mut storage::balances[bidder];
+    
+    constraint auction_ended == false;
+
+    constraint amount > 0;
+
+    constraint amount >= current_cost;
+
+
+    constraint bidder_balance >= amount;
+
+    constraint current_cost' == amount;
+
+    constraint bidder_balance' == bidder_balance - amount;
+
+    constraint owner_balance' == owner_balance + amount;
+    
+    constraint current_owner' == bidder;
+
+    // constraint @safe_increment(nonce);
+
+    
+    constraint auction_ended' == true;
+
+}
+
+predicate StepAuction {
+
+    pub var item_id: int;
+    pub var decrease_amt: int;
+
+    pub var key: b256;
+
+    // Access the state variables
+    state current_cost = mut storage::cost[item_id];
+    state auction_ended = storage::auction_ended[item_id];
+    state owner = storage::item_owner[item_id];
+
+    // Ensure the auction has not ended yet
+    constraint auction_ended == false;
+
+    constraint decrease_amt > 0;
+
+    constraint current_cost - decrease_amt > 0;
+
+    // Ensure only the owner can decrease the cost
+    constraint key == owner;
+
+    // decrease the cost
+    constraint current_cost' == current_cost - decrease_amt;
+
+}
+
+predicate CreateAuction {
+
+    pub var item_id: int;
+    pub var initial_cost: int;
+
+    pub var key: b256;
+
+    // Access the state variables
+    state current_cost = mut storage::cost[item_id];
+    state auction_ended = mut storage::auction_ended[item_id];
+    state owner = mut storage::item_owner[item_id];
+
+    constraint initial_cost > 0;
+
+    constraint @init_once(auction_ended; false);
+    constraint @init_once(current_cost; initial_cost);
+    constraint @init_once(owner; key);
+
+}
+
+
+predicate Mint {
+    // These are public so that the authorization can check them.
+
+    // The key that is being minted to.
+    // Note this is hard coded so that only one entity can mint.
+    pub var key: b256;
+
+    // The amount being minted.
+    // This is also the total supply.
+    pub var amount: int;
+
+    // Read all the state that is being initialized.
+    state balance = mut storage::balances[key];
+    // state nonce = mut storage::nonce[key];
+
+    constraint @init_once(balance; amount);
+    // constraint @init_once(nonce; 1);
+}
+
+
+predicate Transfer {
+    // These are public so that the authorization can check them.
+
+    // The address that the amount is being sent from.
+    pub var key: b256;
+    // The address that the amount is being sent to.
+    pub var to: b256;
+    // The amount being transfered.
+    pub var amount: int;
+
+    // Read the balances and nonce from storage.
+    state sender_balance = mut storage::balances[key];
+    state receiver_balance = mut storage::balances[to];
+    // state nonce = mut storage::nonce[key];
+
+    // Don't allow empty transfers.
+    constraint amount > 0;
+
+    // Make sure the sender has enough balance.
+    constraint sender_balance' >= 0;
+
+    // The change in the sender balance should be the negative of the amount.
+    constraint @delta(sender_balance) == 0 - amount;
+
+    // The change in the receiver balance should be the positive of the amount.
+    // This also handles the case where the receiver's balance is nil.
+    constraint @init_delta(receiver_balance; amount);
+
+    // Increment the nonce.
+    // constraint @safe_increment(nonce);
+}
